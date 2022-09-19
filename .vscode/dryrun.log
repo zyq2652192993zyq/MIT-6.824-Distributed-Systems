@@ -1,0 +1,6 @@
+make --dry-run --always-make --keep-going --print-directory
+make: Entering directory `/Users/yzhang68/Documents/Yuqi/project/MIT-6.824-Distributed-Systems'
+make: Leaving directory `/Users/yzhang68/Documents/Yuqi/project/MIT-6.824-Distributed-Systems'
+ 
+make: *** No targets specified and no makefile found.  Stop.
+
