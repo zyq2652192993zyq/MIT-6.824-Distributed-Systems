@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/gob"
 	"fmt"
 	"os"
 	"time"
@@ -27,53 +28,48 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func RunTask(reply *TaskAssignResponse, workerId WorkerId, files []string, taskType TaskType, taskId TaskId) {
+	taskFinishedRequest := TaskFinishedRequest{
+		TaskType:      taskType,
+		WorkerId:      workerId,
+		TaskId:        taskId,
+		TaskStartTime: reply.Task.GetStartTime(),
+		CommitFiles:   files,
+	}
+	markReply := TaskAssignResponse{}
+	call("Coordinator.MarkTaskAsFinished", &taskFinishedRequest, &markReply)
+}
+
 //
 // main/mrworker.go calls this function.
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+	gob.Register(&MapTask{})
+	gob.Register(&ReduceTask{})
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
-	//log.Println("Worker starts")
 	for {
+		workerId := WorkerId(os.Getpid())
 		args := TaskApplyRequest{
-			WorkerId: WorkerId(os.Getpid()),
+			WorkerId: workerId,
 		}
 		reply := TaskAssignResponse{}
 
 		ok := call("Coordinator.AssignTask", &args, &reply)
 		if ok {
-			//log.Println("reply is " + fmt.Sprintf("%v", reply))
 			switch reply.TaskSignal {
 			case Wait:
-				//log.Println("No task available. Sleep 1 second.")
 				time.Sleep(1 * time.Second)
 			case RunMapTASK:
-				fileNames := reply.MapTask.run(mapf)
-				taskFinishedRequest := TaskFinishedRequest{
-					TaskType:      MapTaskType,
-					WorkerId:      WorkerId(os.Getpid()),
-					TaskId:        TaskId(reply.MapTask.Id),
-					TaskStartTime: reply.MapTask.StartTime,
-					CommitFiles:   fileNames,
-				}
-				markReply := TaskAssignResponse{}
-				//log.Println("Send map task finish request to coordinator " + fmt.Sprintf("%v", taskFinishedRequest))
-				call("Coordinator.MarkTaskAsFinished", &taskFinishedRequest, &markReply)
+				t, _ := reply.Task.(*MapTask)
+				fileNames := t.run(mapf)
+				RunTask(&reply, workerId, fileNames, MapTaskType, TaskId(t.Id))
 			case RunReduceTask:
-				fileNames := reply.ReduceTask.run(reducef)
-				taskFinishedRequest := TaskFinishedRequest{
-					TaskType:      ReduceTaskType,
-					WorkerId:      WorkerId(os.Getpid()),
-					TaskId:        TaskId(reply.ReduceTask.Id),
-					TaskStartTime: reply.ReduceTask.StartTime,
-					CommitFiles:   fileNames,
-				}
-				markReply := TaskAssignResponse{}
-				//log.Println("Send reduce task finish request to coordinator " + fmt.Sprintf("%v", taskFinishedRequest))
-				call("Coordinator.MarkTaskAsFinished", &taskFinishedRequest, &markReply)
+				t, _ := reply.Task.(*ReduceTask)
+				fileNames := t.run(reducef)
+				RunTask(&reply, workerId, fileNames, ReduceTaskType, TaskId(t.Id))
 			case Exit:
-				//log.Println("worker exits")
 				return
 			}
 		} else {

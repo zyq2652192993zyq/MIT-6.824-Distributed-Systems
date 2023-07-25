@@ -57,15 +57,6 @@ func RenameFiles(files []string) {
 	}
 }
 
-func CheckAllStageTasksFinished(remainTasksNum int, tasksInMonitor int, errorMessage string) {
-	if remainTasksNum != 0 {
-		log.Fatalf("There are still %d tasks left to be processed. %s", remainTasksNum, errorMessage)
-	}
-	if tasksInMonitor != 0 {
-		log.Fatalf("There are still %d tasks left in monitor. %s", tasksInMonitor, errorMessage)
-	}
-}
-
 func (c *Coordinator) WaitAllTasksFinished(waitNum int) {
 	c.waitGroup.Add(waitNum)
 	c.waitGroup.Wait()

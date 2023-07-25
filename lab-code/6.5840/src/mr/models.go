@@ -40,6 +40,27 @@ const (
 	RunReduceTask            = "RUN_REDUCE_TASK"
 )
 
+type Task interface {
+	GetTaskType() TaskType
+	GetStartTime() time.Time
+}
+
+func (t *MapTask) GetTaskType() TaskType {
+	return MapTaskType
+}
+
+func (t *MapTask) GetStartTime() time.Time {
+	return t.StartTime
+}
+
+func (t *ReduceTask) GetTaskType() TaskType {
+	return ReduceTaskType
+}
+
+func (t *ReduceTask) GetStartTime() time.Time {
+	return t.StartTime
+}
+
 type CommonFields struct {
 	Id         int
 	InputPath  string
@@ -56,29 +77,22 @@ type ReduceTask struct {
 	CommonFields
 }
 
-type MapTaskTuple struct {
+type TaskTuple struct {
 	WorkerId WorkerId
-	MapTask  MapTask
-}
-
-type ReduceTaskTuple struct {
-	WorkerId   WorkerId
-	ReduceTask ReduceTask
+	Task     Task
 }
 
 type Coordinator struct {
-	mapNum             int
-	reduceNum          int
-	temporaryPath      string
-	finalPath          string
-	mapTasks           []MapTask
-	reduceTasks        []ReduceTask
-	mutex              sync.Mutex
-	waitGroup          sync.WaitGroup
-	mapTasksMonitor    map[TaskId]MapTaskTuple
-	reduceTasksMonitor map[TaskId]ReduceTaskTuple
-	timeout            time.Duration
-	stage              Stage
+	mapNum        int
+	reduceNum     int
+	temporaryPath string
+	finalPath     string
+	tasks         []Task
+	tasksMonitor  map[TaskId]TaskTuple
+	mutex         sync.Mutex
+	waitGroup     sync.WaitGroup
+	timeout       time.Duration
+	stage         Stage
 }
 
 func (t *MapTask) run(mapf func(string, string) []KeyValue) []string {
@@ -172,7 +186,6 @@ type TaskApplyRequest struct {
 }
 
 type TaskAssignResponse struct {
-	MapTask    MapTask
-	ReduceTask ReduceTask
+	Task       Task
 	TaskSignal TaskSignal
 }
