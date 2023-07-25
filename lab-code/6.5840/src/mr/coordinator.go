@@ -2,7 +2,6 @@ package mr
 
 import (
 	"log"
-	"strings"
 	"time"
 )
 import "net"
@@ -137,36 +136,35 @@ func (c *Coordinator) MarkTaskAsFinished(args *TaskFinishedRequest, reply *TaskA
 		taskId := args.TaskId
 		switch args.TaskType {
 		case MapTaskType:
+			// task is still in monitor
 			tuple, ok := c.mapTasksMonitor[taskId]
+			// task is still owned by the worker
 			if ok && args.WorkerId == tuple.WorkerId {
 				delete(c.mapTasksMonitor, taskId)
+				// commit tmp files
+				RenameFiles(args.CommitFiles)
+				// mark task as finished
+				c.waitGroup.Done()
+			} else {
+				DeleteFiles(args.CommitFiles)
 			}
 		case ReduceTaskType:
 			tuple, ok := c.reduceTasksMonitor[taskId]
 			if ok && args.WorkerId == tuple.WorkerId {
 				delete(c.reduceTasksMonitor, taskId)
+				// commit tmp files
+				RenameFiles(args.CommitFiles)
+				// mark task as finished
+				c.waitGroup.Done()
+			} else {
+				DeleteFiles(args.CommitFiles)
 			}
 		}
-		// commit tmp files
-		for _, fileName := range args.CommitFiles {
-			nameArray := strings.Split(fileName, "-")
-			length := len(nameArray)
-			if length > 1 {
-				nameArray = nameArray[0 : length-1]
-				newFileName := strings.Join(nameArray, "-")
-				os.Rename(fileName, newFileName)
-			}
-		}
-
-		// mark task as finished
-		c.waitGroup.Done()
 	} else {
 		// if the worker is timeout, delete the commit files
 		// do not need to remove the task from monitor to tasks array
 		// as we have timeout task check in Assigning task function
-		for _, fileName := range args.CommitFiles {
-			DeleteFile(fileName)
-		}
+		DeleteFiles(args.CommitFiles)
 	}
 
 	return nil
