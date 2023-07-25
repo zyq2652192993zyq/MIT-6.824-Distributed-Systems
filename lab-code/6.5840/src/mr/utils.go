@@ -39,12 +39,21 @@ func DeleteFile(fileName string) {
 	}
 }
 
-func CheckAllStageTasksFinished(remainTasksNum int, tasksInMonitor int, errorMessage string) {
-	if remainTasksNum != 0 {
-		log.Fatalf("There are still %d tasks left to be processed. %s", remainTasksNum, errorMessage)
+func DeleteFiles(files []string) {
+	for _, fileName := range files {
+		DeleteFile(fileName)
 	}
-	if tasksInMonitor != 0 {
-		log.Fatalf("There are still %d tasks left in monitor. %s", tasksInMonitor, errorMessage)
+}
+
+func RenameFiles(files []string) {
+	for _, fileName := range files {
+		nameArray := strings.Split(fileName, "-")
+		length := len(nameArray)
+		if length > 1 {
+			nameArray = nameArray[0 : length-1]
+			newFileName := strings.Join(nameArray, "-")
+			os.Rename(fileName, newFileName)
+		}
 	}
 }
 

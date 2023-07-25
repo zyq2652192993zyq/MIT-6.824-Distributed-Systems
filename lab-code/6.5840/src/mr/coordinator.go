@@ -1,8 +1,8 @@
 package mr
 
 import (
+	"encoding/gob"
 	"log"
-	"strings"
 	"time"
 )
 import "net"
@@ -53,6 +53,40 @@ func (c *Coordinator) Done() bool {
 	return c.stage == CompletedStage
 }
 
+func (c *Coordinator) TaskAssignHandler(args *TaskApplyRequest, reply *TaskAssignResponse) {
+	if len(c.tasks) > 0 {
+		task := c.tasks[0]
+		var taskId TaskId
+		c.tasks = c.tasks[1:]
+		switch tmpTask := task.(type) {
+		case *MapTask:
+			tmpTask.StartTime = time.Now()
+			task = tmpTask
+			taskId = TaskId(tmpTask.Id)
+		case *ReduceTask:
+			tmpTask.StartTime = time.Now()
+			task = tmpTask
+			taskId = TaskId(tmpTask.Id)
+		}
+		reply.Task = task
+		c.tasksMonitor[taskId] = TaskTuple{args.WorkerId, task}
+	} else {
+		reply.TaskSignal = Wait
+		now := time.Now()
+		var timeoutTasks []TaskId
+		for id, taskTuple := range c.tasksMonitor {
+			if taskTuple.Task.GetStartTime().Add(c.timeout).Before(now) {
+				c.tasks = append(c.tasks, taskTuple.Task)
+				timeoutTasks = append(timeoutTasks, id)
+			}
+		}
+		for _, id := range timeoutTasks {
+			delete(c.tasksMonitor, id)
+			log.Printf("remove timeout task %d from monitor at %v stage", id, c.stage)
+		}
+	}
+}
+
 // AssignTask
 // it seems that the assigning task logic can be more abstract and elegant
 // need to merge the duplicate code
@@ -65,58 +99,10 @@ func (c *Coordinator) AssignTask(args *TaskApplyRequest, reply *TaskAssignRespon
 		reply.TaskSignal = Wait
 	case MapStage:
 		reply.TaskSignal = RunMapTASK
-		if len(c.mapTasks) > 0 {
-			// assign a task to worker, then remove the task
-			reply.MapTask = c.mapTasks[0]
-			c.mapTasks = c.mapTasks[1:]
-			// set start time
-			reply.MapTask.StartTime = time.Now()
-			// register the task in monitor
-			c.mapTasksMonitor[TaskId(reply.MapTask.Id)] = MapTaskTuple{args.WorkerId, reply.MapTask}
-		} else {
-			reply.TaskSignal = Wait
-			if len(c.mapTasksMonitor) > 0 {
-				// remove all timeout tasks from monitor
-				now := time.Now()
-				var timeoutTasks []TaskId
-				for id, tuple := range c.mapTasksMonitor {
-					if tuple.MapTask.StartTime.Add(c.timeout).Before(now) {
-						c.mapTasks = append(c.mapTasks, tuple.MapTask)
-						timeoutTasks = append(timeoutTasks, id)
-					}
-				}
-				for _, id := range timeoutTasks {
-					delete(c.mapTasksMonitor, id)
-					log.Printf("remove timeout map task %d from monitor", id)
-				}
-			}
-		}
+		c.TaskAssignHandler(args, reply)
 	case ReduceStage:
 		reply.TaskSignal = RunReduceTask
-		if len(c.reduceTasks) > 0 {
-			reply.ReduceTask = c.reduceTasks[0]
-			c.reduceTasks = c.reduceTasks[1:]
-			reply.ReduceTask.StartTime = time.Now()
-			c.reduceTasksMonitor[TaskId(reply.ReduceTask.Id)] = ReduceTaskTuple{args.WorkerId, reply.ReduceTask}
-			//log.Println("assign a reduce task, " + strconv.Itoa(len(c.reduceTasks)) + " tasks left")
-		} else {
-			reply.TaskSignal = Wait
-			if len(c.reduceTasksMonitor) > 0 {
-				// remove all timeout tasks from monitor
-				now := time.Now()
-				var timeoutTasks []TaskId
-				for id, tuple := range c.reduceTasksMonitor {
-					if tuple.ReduceTask.StartTime.Add(c.timeout).Before(now) {
-						c.reduceTasks = append(c.reduceTasks, tuple.ReduceTask)
-						timeoutTasks = append(timeoutTasks, id)
-					}
-				}
-				for _, id := range timeoutTasks {
-					delete(c.reduceTasksMonitor, id)
-					log.Printf("remove timeout reduce task %d from monitor", id)
-				}
-			}
-		}
+		c.TaskAssignHandler(args, reply)
 	case CompletedStage:
 		reply.TaskSignal = Exit
 	}
@@ -128,45 +114,22 @@ func (c *Coordinator) MarkTaskAsFinished(args *TaskFinishedRequest, reply *TaskA
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
+	taskId := args.TaskId
+	taskTuple, ok := c.tasksMonitor[taskId]
 	now := time.Now()
 	// check whether the task is timeout
-	if args.TaskStartTime.Add(c.timeout).After(now) {
+	if ok && args.WorkerId == taskTuple.WorkerId && args.TaskStartTime.Add(c.timeout).After(now) {
 		// check whether the task is till owned by the related workerId
 		// if so, remove the task from the monitor & rename the commit files
 		// if not, delete all the commit files
-		taskId := args.TaskId
-		switch args.TaskType {
-		case MapTaskType:
-			tuple, ok := c.mapTasksMonitor[taskId]
-			if ok && args.WorkerId == tuple.WorkerId {
-				delete(c.mapTasksMonitor, taskId)
-			}
-		case ReduceTaskType:
-			tuple, ok := c.reduceTasksMonitor[taskId]
-			if ok && args.WorkerId == tuple.WorkerId {
-				delete(c.reduceTasksMonitor, taskId)
-			}
-		}
-		// commit tmp files
-		for _, fileName := range args.CommitFiles {
-			nameArray := strings.Split(fileName, "-")
-			length := len(nameArray)
-			if length > 1 {
-				nameArray = nameArray[0 : length-1]
-				newFileName := strings.Join(nameArray, "-")
-				os.Rename(fileName, newFileName)
-			}
-		}
-
-		// mark task as finished
+		delete(c.tasksMonitor, taskId)
+		RenameFiles(args.CommitFiles)
 		c.waitGroup.Done()
 	} else {
 		// if the worker is timeout, delete the commit files
 		// do not need to remove the task from monitor to tasks array
 		// as we have timeout task check in Assigning task function
-		for _, fileName := range args.CommitFiles {
-			DeleteFile(fileName)
-		}
+		DeleteFiles(args.CommitFiles)
 	}
 
 	return nil
@@ -177,7 +140,7 @@ func (c *Coordinator) GenerateMapTasks(files []string) {
 	defer c.mutex.Unlock()
 
 	for index, fileName := range files {
-		c.mapTasks = append(c.mapTasks, MapTask{CommonFields{
+		c.tasks = append(c.tasks, &MapTask{CommonFields{
 			Id:         index,
 			InputPath:  fileName,
 			OutputPath: c.temporaryPath,
@@ -192,7 +155,7 @@ func (c *Coordinator) GenerateReduceTasks() {
 	defer c.mutex.Unlock()
 
 	for i := 0; i < c.reduceNum; i += 1 {
-		c.reduceTasks = append(c.reduceTasks, ReduceTask{CommonFields{
+		c.tasks = append(c.tasks, &ReduceTask{CommonFields{
 			Id:         i,
 			InputPath:  c.temporaryPath,
 			OutputPath: c.finalPath,
@@ -202,6 +165,15 @@ func (c *Coordinator) GenerateReduceTasks() {
 	c.stage = ReduceStage
 }
 
+func (c *Coordinator) CheckAllStageTasksFinished() {
+	if len(c.tasks) != 0 {
+		log.Fatalf("There are still %d tasks left to be processed. Fail at %v stage.", len(c.tasks), c.stage)
+	}
+	if len(c.tasksMonitor) != 0 {
+		log.Fatalf("There are still %d tasks left in monitor. Fail at %v stage.", len(c.tasksMonitor), c.stage)
+	}
+}
+
 // MakeCoordinator
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
@@ -209,17 +181,18 @@ func (c *Coordinator) GenerateReduceTasks() {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		mapNum:             len(files),
-		reduceNum:          nReduce,
-		temporaryPath:      "mr-lab1",
-		finalPath:          "mr-out",
-		mapTasks:           []MapTask{},
-		reduceTasks:        []ReduceTask{},
-		mapTasksMonitor:    make(map[TaskId]MapTaskTuple),
-		reduceTasksMonitor: make(map[TaskId]ReduceTaskTuple),
-		timeout:            10 * time.Second,
-		stage:              InitStage,
+		mapNum:        len(files),
+		reduceNum:     nReduce,
+		temporaryPath: "mr-lab1",
+		finalPath:     "mr-out",
+		tasks:         []Task{},
+		tasksMonitor:  make(map[TaskId]TaskTuple),
+		timeout:       10 * time.Second,
+		stage:         InitStage,
 	}
+
+	gob.Register(&MapTask{})
+	gob.Register(&ReduceTask{})
 
 	c.server()
 
@@ -231,14 +204,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.WaitAllTasksFinished(c.mapNum)
 
 	// make sure all map tasks have been finished
-	CheckAllStageTasksFinished(len(c.mapTasks), len(c.mapTasksMonitor), "Map stage failed.")
+	c.CheckAllStageTasksFinished()
 
 	// generate reduce tasks
 	c.GenerateReduceTasks()
 
 	c.WaitAllTasksFinished(c.reduceNum)
 
-	CheckAllStageTasksFinished(len(c.reduceTasks), len(c.reduceTasksMonitor), "Reduce stage failed.")
+	c.CheckAllStageTasksFinished()
 
 	// clean temporary files
 	c.CleanIntermediateFiles()
