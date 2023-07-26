@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-type TaskType string
 type Stage string
 type WorkerId int
 type TaskId int
@@ -20,11 +19,6 @@ type ByKey []KeyValue
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
-
-const (
-	MapTaskType    TaskType = "MapTask"
-	ReduceTaskType          = "ReduceTask"
-)
 
 const (
 	MapStage       Stage = "MapStage"
@@ -40,41 +34,12 @@ const (
 	RunReduceTask            = "RUN_REDUCE_TASK"
 )
 
-type Task interface {
-	GetTaskType() TaskType
-	GetStartTime() time.Time
-}
-
-func (t *MapTask) GetTaskType() TaskType {
-	return MapTaskType
-}
-
-func (t *MapTask) GetStartTime() time.Time {
-	return t.StartTime
-}
-
-func (t *ReduceTask) GetTaskType() TaskType {
-	return ReduceTaskType
-}
-
-func (t *ReduceTask) GetStartTime() time.Time {
-	return t.StartTime
-}
-
-type CommonFields struct {
-	Id         int
+type Task struct {
+	TaskId     TaskId
 	InputPath  string
 	OutputPath string
 	StartTime  time.Time
 	ReduceNum  int
-}
-
-type MapTask struct {
-	CommonFields
-}
-
-type ReduceTask struct {
-	CommonFields
 }
 
 type TaskTuple struct {
@@ -95,7 +60,7 @@ type Coordinator struct {
 	stage         Stage
 }
 
-func (t *MapTask) run(mapf func(string, string) []KeyValue) []string {
+func (t *Task) runMapTask(mapf func(string, string) []KeyValue) []string {
 	// read file: open & read
 	contents := ReadFileAsString(t.InputPath)
 
@@ -112,7 +77,7 @@ func (t *MapTask) run(mapf func(string, string) []KeyValue) []string {
 	// The file format is used to avoid files covering each other when a task timeout
 	var mapTaskDumpFiles []string
 	for reduceId, kvArray := range reduceIdMapToKvPair {
-		tmpFileName := fmt.Sprintf("%s-%d-%d-%dtmp", t.OutputPath, reduceId, t.Id, os.Getpid())
+		tmpFileName := fmt.Sprintf("%s-%d-%v-%dtmp", t.OutputPath, reduceId, t.TaskId, os.Getpid())
 		WriteKeyValueToFile(kvArray, tmpFileName)
 		mapTaskDumpFiles = append(mapTaskDumpFiles, tmpFileName)
 	}
@@ -121,11 +86,11 @@ func (t *MapTask) run(mapf func(string, string) []KeyValue) []string {
 	return mapTaskDumpFiles
 }
 
-func (t *ReduceTask) run(reducef func(string, []string) string) []string {
+func (t *Task) runReduceTask(reducef func(string, []string) string) []string {
 	var contents string
 	// read all files has prefix mr-lab1-[reduceId]-*
 	// Note: files with `tmp` suffix should be ignored
-	prefix := fmt.Sprintf("%s-%d", t.InputPath, t.Id)
+	prefix := fmt.Sprintf("%s-%v", t.InputPath, t.TaskId)
 	files, _ := os.ReadDir("./")
 	for _, file := range files {
 		if !file.IsDir() && strings.HasPrefix(file.Name(), prefix) && !strings.HasSuffix(file.Name(), "tmp") {
@@ -148,7 +113,7 @@ func (t *ReduceTask) run(reducef func(string, []string) string) []string {
 	sort.Sort(ByKey(intermediate))
 
 	// format of output reduce results: [mr-out]-[reduceId]
-	outputFileName := fmt.Sprintf("%s-%d-%dtmp", t.OutputPath, t.Id, os.Getpid())
+	outputFileName := fmt.Sprintf("%s-%v-%dtmp", t.OutputPath, t.TaskId, os.Getpid())
 	var reduceOutputKvArray []KeyValue
 
 	// get the reduce output KV: [Key] [reducef result]
@@ -174,7 +139,6 @@ func (t *ReduceTask) run(reducef func(string, []string) string) []string {
 }
 
 type TaskFinishedRequest struct {
-	TaskType      TaskType
 	WorkerId      WorkerId
 	TaskId        TaskId
 	TaskStartTime time.Time

@@ -12,5 +12,5 @@ Now it has another tag: 6.5840
 
 | Lab Name                                                     | Code | Notes |
 | ------------------------------------------------------------ | ---- | ----- |
-| [Lab 1: MapReduce](http://nil.csail.mit.edu/6.824/2021/labs/lab-mr.html) |      |       |
+| [Lab 1: MapReduce](http://nil.csail.mit.edu/6.824/2021/labs/lab-mr.html) |   Files under [src/mr](https://github.com/zyq2652192993zyq/MIT-6.824-Distributed-Systems/tree/main/lab-code/6.5840/src/mr)   |       |
 

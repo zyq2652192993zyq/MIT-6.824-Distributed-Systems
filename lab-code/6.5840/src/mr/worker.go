@@ -28,12 +28,12 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func RunTask(reply *TaskAssignResponse, workerId WorkerId, files []string, taskType TaskType, taskId TaskId) {
+func SendTaskFinishRequest(reply *TaskAssignResponse, workerId WorkerId, files []string) {
+	task := reply.Task
 	taskFinishedRequest := TaskFinishedRequest{
-		TaskType:      taskType,
 		WorkerId:      workerId,
-		TaskId:        taskId,
-		TaskStartTime: reply.Task.GetStartTime(),
+		TaskId:        task.TaskId,
+		TaskStartTime: task.StartTime,
 		CommitFiles:   files,
 	}
 	markReply := TaskAssignResponse{}
@@ -45,8 +45,7 @@ func RunTask(reply *TaskAssignResponse, workerId WorkerId, files []string, taskT
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-	gob.Register(&MapTask{})
-	gob.Register(&ReduceTask{})
+	gob.Register(Task{})
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 	for {
@@ -62,13 +61,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			case Wait:
 				time.Sleep(1 * time.Second)
 			case RunMapTASK:
-				t, _ := reply.Task.(*MapTask)
-				fileNames := t.run(mapf)
-				RunTask(&reply, workerId, fileNames, MapTaskType, TaskId(t.Id))
+				fileNames := reply.Task.runMapTask(mapf)
+				SendTaskFinishRequest(&reply, workerId, fileNames)
 			case RunReduceTask:
-				t, _ := reply.Task.(*ReduceTask)
-				fileNames := t.run(reducef)
-				RunTask(&reply, workerId, fileNames, ReduceTaskType, TaskId(t.Id))
+				fileNames := reply.Task.runReduceTask(reducef)
+				SendTaskFinishRequest(&reply, workerId, fileNames)
 			case Exit:
 				return
 			}

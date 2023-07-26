@@ -55,27 +55,16 @@ func (c *Coordinator) Done() bool {
 
 func (c *Coordinator) TaskAssignHandler(args *TaskApplyRequest, reply *TaskAssignResponse) {
 	if len(c.tasks) > 0 {
-		task := c.tasks[0]
-		var taskId TaskId
+		reply.Task = c.tasks[0]
+		reply.Task.StartTime = time.Now()
 		c.tasks = c.tasks[1:]
-		switch tmpTask := task.(type) {
-		case *MapTask:
-			tmpTask.StartTime = time.Now()
-			task = tmpTask
-			taskId = TaskId(tmpTask.Id)
-		case *ReduceTask:
-			tmpTask.StartTime = time.Now()
-			task = tmpTask
-			taskId = TaskId(tmpTask.Id)
-		}
-		reply.Task = task
-		c.tasksMonitor[taskId] = TaskTuple{args.WorkerId, task}
+		c.tasksMonitor[reply.Task.TaskId] = TaskTuple{args.WorkerId, reply.Task}
 	} else {
 		reply.TaskSignal = Wait
 		now := time.Now()
 		var timeoutTasks []TaskId
 		for id, taskTuple := range c.tasksMonitor {
-			if taskTuple.Task.GetStartTime().Add(c.timeout).Before(now) {
+			if taskTuple.Task.StartTime.Add(c.timeout).Before(now) {
 				c.tasks = append(c.tasks, taskTuple.Task)
 				timeoutTasks = append(timeoutTasks, id)
 			}
@@ -140,12 +129,12 @@ func (c *Coordinator) GenerateMapTasks(files []string) {
 	defer c.mutex.Unlock()
 
 	for index, fileName := range files {
-		c.tasks = append(c.tasks, &MapTask{CommonFields{
-			Id:         index,
+		c.tasks = append(c.tasks, Task{
+			TaskId:     TaskId(index),
 			InputPath:  fileName,
 			OutputPath: c.temporaryPath,
 			ReduceNum:  c.reduceNum,
-		}})
+		})
 	}
 	c.stage = MapStage
 }
@@ -155,12 +144,12 @@ func (c *Coordinator) GenerateReduceTasks() {
 	defer c.mutex.Unlock()
 
 	for i := 0; i < c.reduceNum; i += 1 {
-		c.tasks = append(c.tasks, &ReduceTask{CommonFields{
-			Id:         i,
+		c.tasks = append(c.tasks, Task{
+			TaskId:     TaskId(i),
 			InputPath:  c.temporaryPath,
 			OutputPath: c.finalPath,
 			ReduceNum:  c.reduceNum,
-		}})
+		})
 	}
 	c.stage = ReduceStage
 }
@@ -191,8 +180,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		stage:         InitStage,
 	}
 
-	gob.Register(&MapTask{})
-	gob.Register(&ReduceTask{})
+	gob.Register(Task{})
 
 	c.server()
 
