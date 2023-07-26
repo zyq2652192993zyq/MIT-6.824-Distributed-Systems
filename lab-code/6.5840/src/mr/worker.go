@@ -36,7 +36,7 @@ func SendTaskFinishRequest(reply *TaskAssignResponse, workerId WorkerId, files [
 		TaskStartTime: task.StartTime,
 		CommitFiles:   files,
 	}
-	markReply := TaskAssignResponse{}
+	markReply := EmptyReply{}
 	call("Coordinator.MarkTaskAsFinished", &taskFinishedRequest, &markReply)
 }
 

@@ -153,3 +153,6 @@ type TaskAssignResponse struct {
 	Task       Task
 	TaskSignal TaskSignal
 }
+
+type EmptyReply struct {
+}

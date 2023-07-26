@@ -99,7 +99,7 @@ func (c *Coordinator) AssignTask(args *TaskApplyRequest, reply *TaskAssignRespon
 	return nil
 }
 
-func (c *Coordinator) MarkTaskAsFinished(args *TaskFinishedRequest, reply *TaskAssignResponse) error {
+func (c *Coordinator) MarkTaskAsFinished(args *TaskFinishedRequest, reply *EmptyReply) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
